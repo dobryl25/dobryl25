@@ -43,6 +43,10 @@ static esp_err_t mountSdCard() {
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
     host.slot = SD_HOST;
 
+    // The default SDSPI speed is 20 MHz. With Dupont jumper wires this can be
+    // unreliable, so limit normal card transfers to 4 MHz.
+    host.max_freq_khz = 4000;
+
     sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
     slot_config.gpio_cs = SD_CS;
     slot_config.host_id = SD_HOST;
@@ -70,7 +74,7 @@ mount_code = r'''    ESP_ERROR_CHECK(esp_vfs_fat_spiflash_mount_rw_wl("/data", "
 
     esp_err_t sd_err = mountSdCard();
     if (sd_err == ESP_OK) {
-        jac::Logger::log("SD card mounted at /sd");
+        jac::Logger::log("SD card mounted at /sd (SPI <= 4 MHz)");
     }
     else {
         jac::Logger::log(std::string("SD card mount failed: ") + esp_err_to_name(sd_err));

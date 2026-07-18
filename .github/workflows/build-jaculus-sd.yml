@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - jaculus-sd-build
+  pull_request:
+    branches:
+      - main
 
 jobs:
   build:
@@ -50,13 +53,10 @@ static constexpr const char* SD_MOUNT_POINT = "/sd";
 static sdmmc_card_t* sd_card = nullptr;
 
 static esp_err_t mountSdCard() {
-    // Saturn PMOD 3: CS=GPIO6, MOSI=GPIO8, MISO=GPIO47, SCK=GPIO12.
     constexpr gpio_num_t SD_CS   = GPIO_NUM_6;
     constexpr gpio_num_t SD_MOSI = GPIO_NUM_8;
     constexpr gpio_num_t SD_MISO = GPIO_NUM_47;
     constexpr gpio_num_t SD_SCK  = GPIO_NUM_12;
-
-    // Keep SPI2 free for ordinary Jaculus SPI use and dedicate SPI3 to the SD card.
     constexpr spi_host_device_t SD_HOST = SPI3_HOST;
 
     spi_bus_config_t bus_config = {};
@@ -100,7 +100,6 @@ static esp_err_t mountSdCard() {
           mount_anchor = '    ESP_ERROR_CHECK(esp_vfs_fat_spiflash_mount_rw_wl("/data", "storage", &conf, &storage_wl_handle));\n'
           mount_code = r'''    ESP_ERROR_CHECK(esp_vfs_fat_spiflash_mount_rw_wl("/data", "storage", &conf, &storage_wl_handle));
 
-    // Mount the external microSD card. Jaculus still starts normally if no card is present.
     esp_err_t sd_err = mountSdCard();
     if (sd_err == ESP_OK) {
         jac::Logger::log("SD card mounted at /sd");
@@ -122,11 +121,6 @@ static esp_err_t mountSdCard() {
           ctext = ctext.replace(dep_anchor, 'driver pthread spiffs vfs fatfs sdmmc', 1)
           cmake.write_text(ctext)
           PY
-
-          echo '--- main.cpp SD additions ---'
-          grep -n -A70 -B5 'SD_MOUNT_POINT' firmware/main/main.cpp
-          echo '--- CMake dependencies ---'
-          grep -n -A4 -B2 'REQUIRES' firmware/main/CMakeLists.txt
 
       - name: Build ESP32-S3 Octal PSRAM firmware package
         shell: bash

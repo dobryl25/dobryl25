@@ -1,5 +1,8 @@
 from pathlib import Path
 
+# -----------------------------------------------------------------------------
+# Patch Jaculus-esp32 main firmware to mount the Saturn microSD card at /sd.
+# -----------------------------------------------------------------------------
 main = Path("firmware/main/main.cpp")
 text = main.read_text()
 
@@ -9,11 +12,6 @@ includes = (
     '#include "driver/spi_master.h"\n'
     '#include "driver/sdspi_host.h"\n'
     '#include "sdmmc_cmd.h"\n'
-    '#include <cerrno>\n'
-    '#include <cstdio>\n'
-    '#include <cstring>\n'
-    '#include <dirent.h>\n'
-    '#include <sys/stat.h>\n'
 )
 if include_anchor not in text:
     raise SystemExit("Could not find esp_vfs_fat include anchor")
@@ -67,71 +65,6 @@ static esp_err_t mountSdCard() {
         &sd_card
     );
 }
-
-static void writeSdDiagnostic(esp_err_t mount_err) {
-    FILE* diag = fopen("/data/sd-diagnostic.txt", "w");
-    if (diag == nullptr) {
-        return;
-    }
-
-    fprintf(diag, "mount_result=%s (%d)\n", esp_err_to_name(mount_err), static_cast<int>(mount_err));
-
-    if (mount_err == ESP_OK && sd_card != nullptr) {
-        fprintf(diag, "card_name=%s\n", sd_card->cid.name);
-        fprintf(diag, "sector_size=%u\n", static_cast<unsigned>(sd_card->csd.sector_size));
-        fprintf(diag, "capacity_sectors=%u\n", static_cast<unsigned>(sd_card->csd.capacity));
-
-        struct stat st = {};
-        errno = 0;
-        int stat_result = stat("/sd", &st);
-        fprintf(diag, "stat_sd=%d errno=%d (%s)\n", stat_result, errno, strerror(errno));
-
-        errno = 0;
-        DIR* dir = opendir("/sd");
-        if (dir == nullptr) {
-            fprintf(diag, "opendir_sd=FAIL errno=%d (%s)\n", errno, strerror(errno));
-        }
-        else {
-            fprintf(diag, "opendir_sd=OK\n");
-            int count = 0;
-            while (dirent* entry = readdir(dir)) {
-                fprintf(diag, "dir_entry_%d=%s\n", count, entry->d_name);
-                ++count;
-                if (count >= 20) {
-                    break;
-                }
-            }
-            closedir(dir);
-        }
-
-        errno = 0;
-        FILE* probe = fopen("/sd/__jaculus_probe.txt", "w");
-        if (probe == nullptr) {
-            fprintf(diag, "fopen_write=FAIL errno=%d (%s)\n", errno, strerror(errno));
-        }
-        else {
-            int write_result = fprintf(probe, "Jaculus SD probe\n");
-            int stream_error = ferror(probe);
-            int close_result = fclose(probe);
-            fprintf(diag, "fopen_write=OK write_result=%d ferror=%d fclose=%d\n", write_result, stream_error, close_result);
-
-            errno = 0;
-            FILE* probe_read = fopen("/sd/__jaculus_probe.txt", "r");
-            if (probe_read == nullptr) {
-                fprintf(diag, "fopen_read=FAIL errno=%d (%s)\n", errno, strerror(errno));
-            }
-            else {
-                char buffer[64] = {};
-                char* read_result = fgets(buffer, sizeof(buffer), probe_read);
-                int read_error = ferror(probe_read);
-                int read_close = fclose(probe_read);
-                fprintf(diag, "fopen_read=%s ferror=%d fclose=%d text=%s", read_result ? "OK" : "FAIL", read_error, read_close, read_result ? buffer : "<none>\n");
-            }
-        }
-    }
-
-    fclose(diag);
-}
 '''
 if handle_anchor not in text:
     raise SystemExit("Could not find storage handle anchor")
@@ -141,10 +74,8 @@ mount_anchor = '    ESP_ERROR_CHECK(esp_vfs_fat_spiflash_mount_rw_wl("/data", "s
 mount_code = r'''    ESP_ERROR_CHECK(esp_vfs_fat_spiflash_mount_rw_wl("/data", "storage", &conf, &storage_wl_handle));
 
     esp_err_t sd_err = mountSdCard();
-    writeSdDiagnostic(sd_err);
-
     if (sd_err == ESP_OK) {
-        jac::Logger::log("SD card mounted at /sd (SPI <= 4 MHz, diagnostics enabled)");
+        jac::Logger::log("SD card mounted at /sd (SPI <= 4 MHz, POSIX fs)");
     }
     else {
         jac::Logger::log(std::string("SD card mount failed: ") + esp_err_to_name(sd_err));
@@ -162,3 +93,459 @@ if dep_anchor not in ctext:
     raise SystemExit("Could not find CMake dependency anchor")
 ctext = ctext.replace(dep_anchor, "driver pthread spiffs vfs fatfs sdmmc", 1)
 cmake.write_text(ctext)
+
+# -----------------------------------------------------------------------------
+# Replace Jaculus-machine's std::fstream/std::filesystem-backed runtime file
+# operations with POSIX/C stdio calls. ESP-IDF's VFS supports these calls for
+# both the internal FAT mount and the external SDSPI FAT mount.
+# -----------------------------------------------------------------------------
+file_h = Path("firmware/components/jac-machine/jac/features/types/file.h")
+if not file_h.exists():
+    raise SystemExit(f"Local jac-machine component not found: {file_h}")
+
+file_h.write_text(r'''#pragma once
+
+#include <cerrno>
+#include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <string>
+#include <utility>
+
+#include <jac/machine/values.h>
+
+namespace jac {
+
+
+class File {
+    FILE* _file = nullptr;
+public:
+    std::string path_;
+
+    File(std::string path, std::string flags): path_(std::move(path)) {
+        const bool read = flags.find('r') != std::string::npos;
+        const bool write = flags.find('w') != std::string::npos;
+        const bool append = flags.find('a') != std::string::npos;
+        const bool binary = flags.find('b') != std::string::npos;
+
+        std::string mode;
+        if (append) {
+            mode = read || write ? "a+" : "a";
+        }
+        else if (write) {
+            mode = read ? "w+" : "w";
+        }
+        else if (read) {
+            mode = "r";
+        }
+        else {
+            throw jac::Exception::create(jac::Exception::Type::Error, "Invalid file flags");
+        }
+
+        if (binary) {
+            mode += "b";
+        }
+
+        errno = 0;
+        _file = std::fopen(path_.c_str(), mode.c_str());
+        if (_file == nullptr) {
+            throw jac::Exception::create(
+                jac::Exception::Type::Error,
+                "Could not open file: " + path_ + ": " + std::strerror(errno)
+            );
+        }
+    }
+
+    File(std::filesystem::path path, std::string flags): File(path.string(), std::move(flags)) {}
+
+    File(const File&) = delete;
+    File& operator=(const File&) = delete;
+
+    File(File&& other) noexcept:
+        _file(other._file), path_(std::move(other.path_)) {
+        other._file = nullptr;
+    }
+
+    File& operator=(File&& other) noexcept {
+        if (this != &other) {
+            close();
+            _file = other._file;
+            path_ = std::move(other.path_);
+            other._file = nullptr;
+        }
+        return *this;
+    }
+
+    std::string read(int length = 1024) {
+        if (_file == nullptr || length <= 0) {
+            return {};
+        }
+
+        std::string buffer(static_cast<size_t>(length), '\0');
+        const size_t count = std::fread(buffer.data(), 1, buffer.size(), _file);
+        if (std::ferror(_file)) {
+            throw jac::Exception::create(
+                jac::Exception::Type::Error,
+                "Could not read file: " + path_
+            );
+        }
+        buffer.resize(count);
+        return buffer;
+    }
+
+    void write(std::string data) {
+        if (_file == nullptr) {
+            throw jac::Exception::create(jac::Exception::Type::Error, "File is closed: " + path_);
+        }
+
+        const size_t written = std::fwrite(data.data(), 1, data.size(), _file);
+        if (written != data.size()) {
+            throw jac::Exception::create(
+                jac::Exception::Type::Error,
+                "Could not write file: " + path_
+            );
+        }
+    }
+
+    bool isOpen() {
+        return _file != nullptr;
+    }
+
+    void close() {
+        if (_file != nullptr) {
+            std::fclose(_file);
+            _file = nullptr;
+        }
+    }
+
+    ~File() {
+        close();
+    }
+};
+
+
+} // namespace jac
+''')
+
+filesystem_h = Path("firmware/components/jac-machine/jac/features/filesystemFeature.h")
+if not filesystem_h.exists():
+    raise SystemExit(f"Local jac-machine component not found: {filesystem_h}")
+
+filesystem_h.write_text(r'''#pragma once
+
+#include <jac/machine/class.h>
+#include <jac/machine/functionFactory.h>
+#include <jac/machine/machine.h>
+
+#include <cerrno>
+#include <cstring>
+#include <dirent.h>
+#include <filesystem>
+#include <noal_func.h>
+#include <string>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include "types/file.h"
+
+// XXX: automatic path normalization is performed because esp-idf does not support "." and ".." in paths
+
+
+namespace jac {
+
+
+struct FileProtoBuilder : public ProtoBuilder::Opaque<File>, public ProtoBuilder::Properties {
+    static void addProperties(ContextRef ctx, Object proto) {
+        addPropMember<std::string, &File::path_>(ctx, proto, "path", PropFlags::Enumerable);
+        addMethodMember<bool(File::*)(), &File::isOpen>(ctx, proto, "isOpen", PropFlags::Enumerable);
+        addMethodMember<void(File::*)(), &File::close>(ctx, proto, "close", PropFlags::Enumerable);
+        addMethodMember<std::string(File::*)(int), &File::read>(ctx, proto, "read", PropFlags::Enumerable);
+        addMethodMember<void(File::*)(std::string), &File::write>(ctx, proto, "write", PropFlags::Enumerable);
+    }
+};
+
+
+template<class Next>
+class FilesystemFeature : public Next {
+private:
+
+    std::filesystem::path _codeDir = ".";
+    std::filesystem::path _workingDir = ".";
+
+public:
+    using FileClass = Class<FileProtoBuilder>;
+
+    void setCodeDir(std::string path_) {
+        this->_codeDir = std::filesystem::path(path_).lexically_normal();
+    }
+
+    void setWorkingDir(std::string path_) {
+        this->_workingDir = std::filesystem::path(path_).lexically_normal();
+    }
+
+    class Path {
+        FilesystemFeature& _feature;
+    public:
+        Path(FilesystemFeature& feature): _feature(feature) {}
+
+        std::string normalize(std::string path_) {
+            return std::filesystem::path(path_).lexically_normal().string();
+        }
+
+        std::string dirname(std::string path_) {
+            auto res = std::filesystem::path(path_).parent_path().string();
+            return res.empty() ? "." : res;
+        }
+
+        std::string basename(std::string path_) {
+            return std::filesystem::path(path_).filename().string();
+        }
+
+        std::string join(std::vector<std::string> paths) {
+            std::filesystem::path path_;
+            for (auto& p : paths) {
+                path_ /= p;
+            }
+            return path_.string();
+        }
+    };
+
+private:
+    class Fs {
+        FilesystemFeature& _feature;
+
+        static void throwFsError(const std::string& operation, const std::string& path_) {
+            throw jac::Exception::create(
+                jac::Exception::Type::Error,
+                operation + ": " + path_ + ": " + std::strerror(errno)
+            );
+        }
+
+        static bool statPath(const std::string& path_, struct stat& st) {
+            errno = 0;
+            if (::stat(path_.c_str(), &st) == 0) {
+                return true;
+            }
+            if (errno == ENOENT) {
+                return false;
+            }
+            throwFsError("Could not stat path", path_);
+            return false;
+        }
+
+        static void mkdirRecursive(const std::string& path_) {
+            std::filesystem::path normalized(path_);
+            std::filesystem::path current;
+
+            for (const auto& part : normalized) {
+                current /= part;
+                const std::string currentPath = current.string();
+                if (currentPath.empty() || currentPath == "/") {
+                    continue;
+                }
+
+                struct stat st = {};
+                errno = 0;
+                if (::stat(currentPath.c_str(), &st) == 0) {
+                    if (!S_ISDIR(st.st_mode)) {
+                        errno = ENOTDIR;
+                        throwFsError("Path component is not a directory", currentPath);
+                    }
+                    continue;
+                }
+
+                if (errno != ENOENT) {
+                    throwFsError("Could not stat directory", currentPath);
+                }
+
+                errno = 0;
+                if (::mkdir(currentPath.c_str(), 0777) != 0 && errno != EEXIST) {
+                    throwFsError("Could not create directory", currentPath);
+                }
+            }
+        }
+
+        static void removeRecursive(const std::string& path_) {
+            struct stat st = {};
+            errno = 0;
+            if (::stat(path_.c_str(), &st) != 0) {
+                if (errno == ENOENT) {
+                    return;
+                }
+                throwFsError("Could not stat path", path_);
+            }
+
+            if (!S_ISDIR(st.st_mode)) {
+                errno = 0;
+                if (::remove(path_.c_str()) != 0 && errno != ENOENT) {
+                    throwFsError("Could not remove file", path_);
+                }
+                return;
+            }
+
+            errno = 0;
+            DIR* dir = ::opendir(path_.c_str());
+            if (dir == nullptr) {
+                throwFsError("Could not open directory", path_);
+            }
+
+            while (dirent* entry = ::readdir(dir)) {
+                const std::string name = entry->d_name;
+                if (name == "." || name == "..") {
+                    continue;
+                }
+
+                std::string child = path_;
+                if (!child.empty() && child.back() != '/') {
+                    child += '/';
+                }
+                child += name;
+                removeRecursive(child);
+            }
+            ::closedir(dir);
+
+            errno = 0;
+            if (::rmdir(path_.c_str()) != 0 && errno != ENOENT) {
+                throwFsError("Could not remove directory", path_);
+            }
+        }
+
+        std::string workingPath(std::string path_) {
+            return _feature.path.normalize((_feature._workingDir / path_).string());
+        }
+
+        std::string codePath(std::string path_) {
+            return _feature.path.normalize((_feature._codeDir / path_).string());
+        }
+
+    public:
+        Fs(FilesystemFeature& feature) : _feature(feature) {}
+
+        std::string loadCode(std::string filename) {
+            std::string buffer;
+            File file(codePath(filename), "r");
+            std::string read = file.read();
+            while (!read.empty()) {
+                buffer += read;
+                read = file.read();
+            }
+            return buffer;
+        }
+
+        bool existsCode(std::string path_) {
+            struct stat st = {};
+            return statPath(codePath(path_), st);
+        }
+
+        bool isFileCode(std::string path_) {
+            struct stat st = {};
+            return statPath(codePath(path_), st) && S_ISREG(st.st_mode);
+        }
+
+        bool isDirectoryCode(std::string path_) {
+            struct stat st = {};
+            return statPath(codePath(path_), st) && S_ISDIR(st.st_mode);
+        }
+
+        File open(std::string path_, std::string flags) {
+            return File(workingPath(path_), std::move(flags));
+        }
+
+        bool exists(std::string path_) {
+            struct stat st = {};
+            return statPath(workingPath(path_), st);
+        }
+
+        bool isFile(std::string path_) {
+            struct stat st = {};
+            return statPath(workingPath(path_), st) && S_ISREG(st.st_mode);
+        }
+
+        bool isDirectory(std::string path_) {
+            struct stat st = {};
+            return statPath(workingPath(path_), st) && S_ISDIR(st.st_mode);
+        }
+
+        void mkdir(std::string path_) {
+            mkdirRecursive(workingPath(path_));
+        }
+
+        std::vector<std::string> readdir(std::string path_) {
+            const std::string resolved = workingPath(path_);
+            std::vector<std::string> res;
+
+            errno = 0;
+            DIR* dir = ::opendir(resolved.c_str());
+            if (dir == nullptr) {
+                throwFsError("Could not open directory", resolved);
+            }
+
+            while (dirent* entry = ::readdir(dir)) {
+                const std::string name = entry->d_name;
+                if (name != "." && name != "..") {
+                    res.push_back(name);
+                }
+            }
+            ::closedir(dir);
+            return res;
+        }
+
+        void rm(std::string path_) {
+            const std::string resolved = workingPath(path_);
+            errno = 0;
+            if (::remove(resolved.c_str()) != 0 && errno != ENOENT) {
+                throwFsError("Could not remove path", resolved);
+            }
+        }
+
+        void rmdir(std::string path_) {
+            removeRecursive(workingPath(path_));
+        }
+    };
+
+public:
+    Path path;
+    Fs fs;
+
+    FilesystemFeature() : path(*this), fs(*this) {
+        FileClass::init("File");
+    }
+
+    void initialize() {
+        Next::initialize();
+
+        FileClass::initContext(this->context());
+
+        FunctionFactory ff(this->context());
+
+        Module& pathMod = this->newModule("path");
+        pathMod.addExport("normalize", ff.newFunction(noal::function(&Path::normalize, &(this->path))));
+        pathMod.addExport("dirname", ff.newFunction(noal::function(&Path::dirname, &(this->path))));
+        pathMod.addExport("basename", ff.newFunction(noal::function(&Path::basename, &(this->path))));
+        pathMod.addExport("join", ff.newFunctionVariadic([this](std::vector<ValueWeak> paths) {
+            std::vector<std::string> paths_;
+            for (auto& p : paths) {
+                paths_.push_back(p.to<std::string>());
+            }
+            return this->path.join(paths_);
+        }));
+
+        Module& fsMod = this->newModule("fs");
+        fsMod.addExport("open", ff.newFunction([this](std::string path_, std::string flags) {
+            return FileClass::createInstance(this->context(), new File(this->fs.open(path_, flags)));
+        }));
+        fsMod.addExport("exists", ff.newFunction(noal::function(&Fs::exists, &(this->fs))));
+        fsMod.addExport("isFile", ff.newFunction(noal::function(&Fs::isFile, &(this->fs))));
+        fsMod.addExport("isDirectory", ff.newFunction(noal::function(&Fs::isDirectory, &(this->fs))));
+        fsMod.addExport("mkdir", ff.newFunction(noal::function(&Fs::mkdir, &(this->fs))));
+        fsMod.addExport("rm", ff.newFunction(noal::function(&Fs::rm, &(this->fs))));
+        fsMod.addExport("rmdir", ff.newFunction(noal::function(&Fs::rmdir, &(this->fs))));
+        fsMod.addExport("readdir", ff.newFunction(noal::function(&Fs::readdir, &(this->fs))));
+    }
+};
+
+
+} // namespace jac
+''')
+
+print("Patched Jaculus Saturn SD support and POSIX filesystem backend")

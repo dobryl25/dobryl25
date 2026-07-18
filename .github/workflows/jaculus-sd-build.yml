@@ -34,10 +34,10 @@ jobs:
           mkdir -p firmware/components/jac-machine
           cp -a jaculus-machine-source/src/. firmware/components/jac-machine/
 
-      - name: Apply researched Saturn SD integration
+      - name: Apply stable Saturn SD integration
         run: |
           python3 patch_jaculus_sd.py
-          python3 patch_jaculus_sd_final.py
+          python3 patch_jaculus_sd_stable.py
 
       - name: Build ESP32-S3 Octal PSRAM package
         uses: espressif/esp-idf-ci-action@v1
@@ -55,16 +55,16 @@ jobs:
       - name: Upload flashable firmware
         uses: actions/upload-artifact@v4
         with:
-          name: Jaculus-0.2.4-Saturn-SD-Final
+          name: Jaculus-0.2.4-Saturn-SD-Stable
           path: firmware/out/ESP32-S3-Generic-OctalPSRAM.tar.gz
           if-no-files-found: error
 
       - name: Publish firmware into repository
         run: |
           mkdir -p firmware-output
-          cp firmware/out/ESP32-S3-Generic-OctalPSRAM.tar.gz firmware-output/Jaculus-0.2.4-Saturn-SD-Final.tar.gz
+          cp firmware/out/ESP32-S3-Generic-OctalPSRAM.tar.gz firmware-output/Jaculus-0.2.4-Saturn-SD-Stable.tar.gz
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add firmware-output/Jaculus-0.2.4-Saturn-SD-Final.tar.gz
-          git commit -m "Publish researched Jaculus Saturn SD firmware" || exit 0
+          git add firmware-output/Jaculus-0.2.4-Saturn-SD-Stable.tar.gz
+          git commit -m "Publish stable Jaculus Saturn SD firmware" || exit 0
           git push

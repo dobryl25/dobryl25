@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - 'firmware-output/**'
   workflow_dispatch:
 
 permissions:
@@ -42,16 +44,16 @@ jobs:
       - name: Upload flashable firmware
         uses: actions/upload-artifact@v4
         with:
-          name: Jaculus-0.2.4-Saturn-SD
+          name: Jaculus-0.2.4-Saturn-SD-Diagnostic
           path: firmware/out/ESP32-S3-Generic-OctalPSRAM.tar.gz
           if-no-files-found: error
 
       - name: Publish firmware into repository
         run: |
           mkdir -p firmware-output
-          cp firmware/out/ESP32-S3-Generic-OctalPSRAM.tar.gz firmware-output/Jaculus-0.2.4-Saturn-SD.tar.gz
+          cp firmware/out/ESP32-S3-Generic-OctalPSRAM.tar.gz firmware-output/Jaculus-0.2.4-Saturn-SD-Diagnostic.tar.gz
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add firmware-output/Jaculus-0.2.4-Saturn-SD.tar.gz
-          git commit -m "Publish Jaculus Saturn SD firmware" || exit 0
+          git add firmware-output/Jaculus-0.2.4-Saturn-SD-Diagnostic.tar.gz
+          git commit -m "Publish diagnostic Jaculus Saturn SD firmware" || exit 0
           git push

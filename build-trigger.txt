@@ -1,4 +1,4 @@
-Stable Saturn SD firmware build
+Extended-storage Saturn SD firmware build
 
 Hardware allocation (PMOD3 fully reserved for SD):
 - SD CS:   PMOD3 Pin1 / GPIO6
@@ -10,6 +10,8 @@ Build configuration:
 - SPI3 host
 - 4 MHz SDSPI maximum
 - POSIX-backed Jaculus fs implementation
-- Late mount after Jaculus feature initialization
-- Preserve successful /sd mount across Jaculus JavaScript Machine restarts
-- Do not unmount/remount SD on Build/Flash/Monitor program restart
+- Late persistent /sd mount across Jaculus Machine restarts
+- Boot application directly from /sd/robodeck/software/main.js
+- Keep Jaculus runtime and installed libraries internal
+- Use ESP32-S3 Octal PSRAM through malloc/new for large C++ source buffers
+- No JavaScript launcher module and no copy of application code into internal storage

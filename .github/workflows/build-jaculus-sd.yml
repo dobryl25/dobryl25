@@ -1,0 +1,21 @@
+name: Build Jaculus SD firmware
+
+on:
+  push:
+    branches:
+      - jaculus-sd-build
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.2.2
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@v4
+
+      - name: Clone Jaculus 0.2.4 source
+        run: |
+          git clone --recursive https://github.com/jaculus-org/Jaculus-esp32.git firmware
+          cd firmware
+         

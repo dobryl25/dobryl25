@@ -1,14 +1,15 @@
-Researched Saturn SD firmware build
+Stable Saturn SD firmware build
 
-Hardware allocation:
-- SD CS:   PMOD3 Pin3 / GPIO47
-- SD MOSI: PMOD3 Pin6 / GPIO9
-- SD MISO: PMOD3 Pin7 / GPIO11
-- SD SCK:  PMOD3 Pin8 / GPIO13
+Hardware allocation (PMOD3 fully reserved for SD):
+- SD CS:   PMOD3 Pin1 / GPIO6
+- SD MOSI: PMOD3 Pin2 / GPIO8
+- SD MISO: PMOD3 Pin3 / GPIO47
+- SD SCK:  PMOD3 Pin4 / GPIO12
 
 Build configuration:
-- Dedicated SPI3 host
+- SPI3 host
 - 4 MHz SDSPI maximum
-- ESP-IDF v5.2.2 reference-style SPI initialization
-- disk_status_check_enable=false
 - POSIX-backed Jaculus fs implementation
+- Late mount after Jaculus feature initialization
+- Preserve successful /sd mount across Jaculus JavaScript Machine restarts
+- Do not unmount/remount SD on Build/Flash/Monitor program restart

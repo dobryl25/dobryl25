@@ -8,6 +8,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -16,6 +19,8 @@ jobs:
     steps:
       - name: Checkout build repository
         uses: actions/checkout@v4
+        with:
+          ref: jaculus-sd-build
 
       - name: Clone Jaculus 0.2.4 source
         shell: bash
@@ -129,9 +134,25 @@ static esp_err_t mountSdCard() {
           bash scripts/build-esp32-s3-generic-octal.sh
           ls -lh out/
 
+      - name: Copy firmware package
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          cp firmware/out/ESP32-S3-Generic-OctalPSRAM.tar.gz artifacts/Jaculus-0.2.4-Saturn-SD.tar.gz
+
+      - name: Commit firmware package to build branch
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add artifacts/Jaculus-0.2.4-Saturn-SD.tar.gz
+          git commit -m "Add built Jaculus SD firmware [skip ci]"
+          git push origin HEAD:jaculus-sd-build
+
       - name: Upload flashable firmware package
         uses: actions/upload-artifact@v4
         with:
           name: Jaculus-0.2.4-Saturn-SD
-          path: firmware/out/ESP32-S3-Generic-OctalPSRAM.tar.gz
+          path: artifacts/Jaculus-0.2.4-Saturn-SD.tar.gz
           if-no-files-found: error

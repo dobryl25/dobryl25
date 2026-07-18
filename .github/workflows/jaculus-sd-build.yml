@@ -35,7 +35,9 @@ jobs:
           cp -a jaculus-machine-source/src/. firmware/components/jac-machine/
 
       - name: Patch Jaculus with Saturn SD and POSIX filesystem support
-        run: python3 patch_jaculus_sd.py
+        run: |
+          python3 patch_jaculus_sd.py
+          python3 patch_jaculus_sd_late_mount.py
 
       - name: Build ESP32-S3 Octal PSRAM package
         uses: espressif/esp-idf-ci-action@v1
@@ -53,16 +55,16 @@ jobs:
       - name: Upload flashable firmware
         uses: actions/upload-artifact@v4
         with:
-          name: Jaculus-0.2.4-Saturn-SD-POSIX
+          name: Jaculus-0.2.4-Saturn-SD-LateMount
           path: firmware/out/ESP32-S3-Generic-OctalPSRAM.tar.gz
           if-no-files-found: error
 
       - name: Publish firmware into repository
         run: |
           mkdir -p firmware-output
-          cp firmware/out/ESP32-S3-Generic-OctalPSRAM.tar.gz firmware-output/Jaculus-0.2.4-Saturn-SD-POSIX.tar.gz
+          cp firmware/out/ESP32-S3-Generic-OctalPSRAM.tar.gz firmware-output/Jaculus-0.2.4-Saturn-SD-LateMount.tar.gz
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add firmware-output/Jaculus-0.2.4-Saturn-SD-POSIX.tar.gz
-          git commit -m "Publish Jaculus Saturn SD POSIX firmware" || exit 0
+          git config user.email "41898273+github-actions[bot]@users.noreply.github.com"
+          git add firmware-output/Jaculus-0.2.4-Saturn-SD-LateMount.tar.gz
+          git commit -m "Publish Jaculus Saturn SD late-mount firmware" || exit 0
           git push

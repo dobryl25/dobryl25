@@ -4,8 +4,8 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - 'firmware-output/**'
+    paths:
+      - 'build-trigger.txt'
   workflow_dispatch:
 
 permissions:
@@ -18,14 +18,14 @@ jobs:
       - name: Checkout helper repo
         uses: actions/checkout@v4
 
-      - name: Clone Jaculus 0.2.4 source
+      - name: Clone pinned Jaculus 0.2.4 source
         run: |
           git clone --recursive https://github.com/jaculus-org/Jaculus-esp32.git firmware
           cd firmware
           git checkout 4c1a59d6973fd61bc603b5867aac459db789aa9b
           git submodule update --init --recursive
 
-      - name: Add local Jaculus-machine component
+      - name: Add pinned local Jaculus-machine component
         run: |
           git clone https://github.com/jaculus-org/Jaculus-machine.git jaculus-machine-source
           cd jaculus-machine-source
@@ -34,10 +34,10 @@ jobs:
           mkdir -p firmware/components/jac-machine
           cp -a jaculus-machine-source/src/. firmware/components/jac-machine/
 
-      - name: Patch Jaculus with Saturn SD and POSIX filesystem support
+      - name: Apply researched Saturn SD integration
         run: |
           python3 patch_jaculus_sd.py
-          python3 patch_jaculus_sd_late_mount.py
+          python3 patch_jaculus_sd_final.py
 
       - name: Build ESP32-S3 Octal PSRAM package
         uses: espressif/esp-idf-ci-action@v1
@@ -55,16 +55,16 @@ jobs:
       - name: Upload flashable firmware
         uses: actions/upload-artifact@v4
         with:
-          name: Jaculus-0.2.4-Saturn-SD-LateMount
+          name: Jaculus-0.2.4-Saturn-SD-Final
           path: firmware/out/ESP32-S3-Generic-OctalPSRAM.tar.gz
           if-no-files-found: error
 
       - name: Publish firmware into repository
         run: |
           mkdir -p firmware-output
-          cp firmware/out/ESP32-S3-Generic-OctalPSRAM.tar.gz firmware-output/Jaculus-0.2.4-Saturn-SD-LateMount.tar.gz
+          cp firmware/out/ESP32-S3-Generic-OctalPSRAM.tar.gz firmware-output/Jaculus-0.2.4-Saturn-SD-Final.tar.gz
           git config user.name "github-actions[bot]"
-          git config user.email "41898273+github-actions[bot]@users.noreply.github.com"
-          git add firmware-output/Jaculus-0.2.4-Saturn-SD-LateMount.tar.gz
-          git commit -m "Publish Jaculus Saturn SD late-mount firmware" || exit 0
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add firmware-output/Jaculus-0.2.4-Saturn-SD-Final.tar.gz
+          git commit -m "Publish researched Jaculus Saturn SD firmware" || exit 0
           git push
